@@ -1,0 +1,56 @@
+alpha = { 'a'..'z' | 'A'..'Z' }
+alphasymbol = { "_" }
+digit = { '0'..'9' }
+
+newline    = _{ "\n" | "\r\n" }
+space = _{ " " | "\t" }
+WHITESPACE = _{ space | newline }
+block_comment = _{ "/*" ~ (block_comment | !"*/" ~ ANY)* ~ "*/" }
+COMMENT    = _{ block_comment | ("//" ~ (!newline ~ ANY)*) }
+
+integer = @{ digit+ }
+signed_integer = @{ ("+" | "-")? ~ digit+ }
+non_int = @{ (integer)? ~ ("." ~ integer) ~ (!("f") | !("d")) }
+signed_non_int = @{ ("+" | "-")? ~ non_int }
+float = @{ signed_non_int ~ "f" }
+double = @{ signed_non_int ~ "d" }
+number = { float | double | non_int | signed_non_int | integer | signed_integer }
+
+quote = _{ "\"" }
+escape    = @{ "\\" ~ ("\"" | "\\" | "r" | "n" | "t" | "0" | "'" ) }
+inner_str = @{ (!("\"" | "\\") ~ ANY)* ~ (escape ~ inner_str)? }
+string = ${ quote ~ inner_str ~ quote }
+
+array2 = {"[" ~ number ~ "," ~ number ~ "]" }
+array3 = {"[" ~ number ~ "," ~ number ~ "," ~ number ~ "]" }
+array4 = {"[" ~ number ~ "," ~ number ~ "," ~ number ~ "," ~ number ~ "]" }
+
+array = { array2 | array3 | array4 }
+
+eof_nl = @{ (newline | EOI) } //end of input or new line
+
+value = { array | string | number }
+
+ident = @{ !(digit) ~(alpha | alphasymbol | digit )+ }
+
+varstart = _{ "$" }
+variable = ${ varstart ~ ident }
+vardec = { variable ~ value }
+vardeclist = _{ vardec+ }
+
+arrayref = ${varstart ~ ident ~ "[" ~ integer ~ "]" }
+
+srcdest = { (arrayref | value | variable) }
+
+proxyparam = { ident ~ srcdest }
+proxyparamlist = _{ proxyparam+ }
+
+blockstart = _{ "{" }
+identblockstart = { ident ~ blockstart }
+blockend = _{ "}" }
+
+proxy = { identblockstart ~ proxyparamlist ~ blockend }
+proxyblockstart = _{ ^"proxies" ~ blockstart }
+proxyblock = { proxyblockstart ~ proxy* ~ blockend }
+
+material = { identblockstart ~ vardeclist? ~ proxyblock? ~ blockend }
