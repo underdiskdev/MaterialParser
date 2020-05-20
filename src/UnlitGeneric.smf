@@ -1,22 +1,38 @@
-SimpleShader
+UnlitGeneric
 {
+	// basetexture is a mandatory uniform variable for 'UnlitGeneric'
 	$basetexture "dev/gradient_dif"
-	$random 0.0
-	$color [0.0,0.0,0.0]
-	
-	Proxies
+	// color is an optional uniform variable for 'UnlitGeneric'
+	$color [1.0,1.0,1.0,1.0]
+	// those are not uniform variables
+	$randomnumber 0.0
+	$health 0
+
+	// setup proxies are executed once when the material is applied
+	SetupProxies
 	{
 		RandomDouble {
 			resultvar $random
 			min 0.0
 			max 1.0
 		}
+	}
+	// render proxies are executed when the object is rendered
+	RenderProxies
+	{
+		EntityGetHealth { // let's assume health is an integer between 0 and 100 
+			resultvar $health
+		}
+		DivideF { // divide $health so that it fits between 0 and 1
+			srcvar $health
+			divisor 100
+			resultvar $health
+		}
 		Set3 {
-			srcvar $random
+			srcvar $health
 			resultvar1 $color[0]
 			resultvar2 $color[1]
 			resultvar3 $color[2]
 		}
-
 	}
 }

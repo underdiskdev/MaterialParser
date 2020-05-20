@@ -72,7 +72,7 @@ fn treat_vardec(pair: &mut pest::iterators::Pairs<'_, Rule>, material: &mut Mate
         Some(variable) => {
             match variable.into_inner().nth(0) {
                 Some(ident) => {
-                    ident.as_str().to_owned();
+                    ident.as_str().to_owned()
                 },
                 None => return Err("Invalid identifier in vardec")
             }
@@ -80,7 +80,7 @@ fn treat_vardec(pair: &mut pest::iterators::Pairs<'_, Rule>, material: &mut Mate
         None => return Err("Expected 2 elements in vardec")
     };
 
-    let val = match pair.nth(1) {
+    let val = match pair.nth(0) {
         Some(value) => {
             match value.into_inner().nth(0) {
                 Some(data) => data,
@@ -93,41 +93,58 @@ fn treat_vardec(pair: &mut pest::iterators::Pairs<'_, Rule>, material: &mut Mate
     let type_: MaterialVariableType;
     match val.as_rule() {
         Rule::string => {
-            let string = val.into_inner().nth(0).unwrap().as_str().to_owned();
+            let string = match val.into_inner().nth(0) {
+                Some(data) => data.as_str().to_owned(),
+                None => return Err("Invalid string")
+            };
             type_ = MaterialVariableType::STRING(string);
         },
         Rule::number => {
-            let number = val.into_inner().nth(0).unwrap();
+            let number = match val.into_inner().nth(0) {
+                Some(data) => data,
+                None => return Err("Invalid number")
+            };
             match number.as_rule() {
                 Rule::float => {
-                    //Nightly only at type of writing: let string = number.as_str().to_owned().strip_suffix("f");
                     let string = number.as_str().to_owned();
-                    let size = string.len();
-                    let string = string[..size - 1].to_owned();
-                    type_ = MaterialVariableType::FLOAT(string.parse::<f32>().expect("Invalid float!"));
+                    let number = match f32::from_parsed_number_string(&string) {
+                        Ok(n) => n,
+                        Err(e) => return Err(e)
+                    };
+                    type_ = MaterialVariableType::FLOAT(number);
                 },
                 Rule::double => {
-                    //Nightly only at type of writing: let string = number.as_str().to_owned().strip_suffix("d");
                     let string = number.as_str().to_owned();
-                    let size = string.len();
-                    let string = string[..size - 1].to_owned();
-                    type_ = MaterialVariableType::DOUBLE(string.parse::<f64>().expect("Invalid double!"));
+                    let number = match f64::from_parsed_number_string(&string) {
+                        Ok(n) => n,
+                        Err(e) => return Err(e)
+                    };
+                    type_ = MaterialVariableType::DOUBLE(number);
                 },
                 Rule::non_int | Rule::signed_non_int => {
                     let string = number.as_str().to_owned();
-                    type_ = MaterialVariableType::DOUBLE(string.parse::<f64>().expect("non_int considered as a float but resulted in parsing error"));
+                    let number = match string.parse::<f64>() {
+                        Ok(n) => n,
+                        Err(_) => return Err("non_int considered as a double but resulted in parsing error")
+                    };
+                    type_ = MaterialVariableType::DOUBLE(number);
                 },
                 Rule::integer | Rule::signed_integer => {
                     let string = number.as_str().to_owned();
-                    type_ = MaterialVariableType::INTEGER(string.parse::<i32>().expect("Invalid integer!"));
+                    let number = match string.parse::<i32>() {
+                        Ok(n) => n,
+                        Err(_) => return Err("Invalid integer")
+                    };
+                    type_ = MaterialVariableType::INTEGER(number);
                 },
-                _ => panic!("Invalid number in variable declaration")
+                _ => return Err("Invalid number")
             }
         },
         //todo: Arrays are currently unsupported
         Rule::array => return Err("Arrays are currently unsupported"),
         _ => return Err("Invalid value type in vardec")
     }
+    material.variables.insert(varname,   type_ );
     Ok(())
 }
 
@@ -184,178 +201,18 @@ fn parse_material_file(data: &String) -> Result<MaterialFile, &'static str> {
                 }
             },
             Rule::vardec => {
-
-                treat_vardec(&mut pair.into_inner(), &mut material);
-
-                let varname = pair.clone()
-                            .into_inner().nth(0).unwrap()
-                            .into_inner().nth(0).unwrap()
-                            .as_str().to_owned();
-                let val = pair.clone()
-                            .into_inner().nth(1).unwrap()
-                            .into_inner().nth(0).unwrap();
-                let type_: MaterialVariableType;
-                match val.as_rule() {
-                    Rule::string => {
-                        let string = val.into_inner().nth(0).unwrap().as_str().to_owned();
-                        type_ = MaterialVariableType::STRING(string);
-                    },
-                    Rule::number => {
-                        let number = val.into_inner().nth(0).unwrap();
-                        match number.as_rule() {
-                            Rule::float => {
-                                //Nightly only at type of writing: let string = number.as_str().to_owned().strip_suffix("f");
-                                let string = number.as_str().to_owned();
-                                let size = string.len();
-                                let string = string[..size - 1].to_owned();
-                                type_ = MaterialVariableType::FLOAT(string.parse::<f32>().expect("Invalid float!"));
-                            },
-                            Rule::double => {
-                                //Nightly only at type of writing: let string = number.as_str().to_owned().strip_suffix("d");
-                                let string = number.as_str().to_owned();
-                                let size = string.len();
-                                let string = string[..size - 1].to_owned();
-                                type_ = MaterialVariableType::DOUBLE(string.parse::<f64>().expect("Invalid double!"));
-                            },
-                            Rule::non_int | Rule::signed_non_int => {
-                                let string = number.as_str().to_owned();
-                                type_ = MaterialVariableType::DOUBLE(string.parse::<f64>().expect("non_int considered as a float but resulted in parsing error"));
-                            },
-                            Rule::integer | Rule::signed_integer => {
-                                let string = number.as_str().to_owned();
-                                type_ = MaterialVariableType::INTEGER(string.parse::<i32>().expect("Invalid integer!"));
-                            },
-                            _ => panic!("Invalid number in variable declaration")
-                        }
-                    },
-                    Rule::array => {
-                        let mut type_to_interpret_to = MaterialVariableType::NONE;
-                        let array = val.into_inner().nth(0).unwrap();
-                        for number in array.clone().into_inner() {
-                            match number.into_inner().nth(0).unwrap().as_rule() {
-                                Rule::integer => {
-                                    match type_to_interpret_to {
-                                        MaterialVariableType::NONE => {
-                                            type_to_interpret_to = MaterialVariableType::INTEGER(0);
-                                        }
-                                        _ => {},
-                                    }
-                                },
-                                Rule::float => {
-                                    match type_to_interpret_to {
-                                        MaterialVariableType::NONE | MaterialVariableType::INTEGER(_) => {
-                                            type_to_interpret_to = MaterialVariableType::FLOAT(0.0);
-                                        },
-                                        _ => {},
-                                    }
-                                }
-                                Rule::double | Rule::non_int | Rule::signed_non_int => {
-                                    match type_to_interpret_to {
-                                        MaterialVariableType::NONE | MaterialVariableType::INTEGER(_) | MaterialVariableType::FLOAT(_) => {
-                                            type_to_interpret_to = MaterialVariableType::DOUBLE(0.0);
-                                        },
-                                        _ => {},
-                                    }
-                                },
-                                _ => panic!("Invalid number")
-                            }
-                        }
-                        match array.as_rule() {
-                            Rule::array2 => {
-                                let s0 = array.clone().into_inner().nth(0).unwrap().as_str();
-                                let s1 = array.into_inner().nth(1).unwrap().as_str();
-                                match type_to_interpret_to {
-                                    MaterialVariableType::INTEGER(_) => {
-                                        let n0 = s0.parse::<i32>().unwrap();
-                                        let n1 = s1.parse::<i32>().unwrap();
-                                        type_ = MaterialVariableType::ARRAY2(n0, n1);
-                                    },
-                                    MaterialVariableType::FLOAT(_) => {
-                                        let n0 = s0.parse::<f32>().unwrap();
-                                        let n1 = s1.parse::<f32>().unwrap();
-                                        type_ = MaterialVariableType::ARRAY2F(n0, n1);
-                                    },
-                                    MaterialVariableType::DOUBLE(_) => {
-                                        let n0 = s0.parse::<f64>().unwrap();
-                                        let n1 = s1.parse::<f64>().unwrap();
-                                        type_ = MaterialVariableType::ARRAY2D(n0, n1);
-                                    },
-                                    _ => panic!("Invalid array type"),
-                                }
-                            },
-                            Rule::array3 => {
-                                let s0 = array.clone().into_inner().nth(0).unwrap().as_str();
-                                let s1 = array.clone().into_inner().nth(1).unwrap().as_str();
-                                let s2 = array.into_inner().nth(2).unwrap().as_str();
-                                match type_to_interpret_to {
-                                    MaterialVariableType::INTEGER(_) => {
-                                        let n0 = s0.parse::<i32>().unwrap();
-                                        let n1 = s1.parse::<i32>().unwrap();
-                                        let n2 = s2.parse::<i32>().unwrap();
-                                        type_ = MaterialVariableType::ARRAY3(n0, n1, n2);
-                                    },
-                                    MaterialVariableType::FLOAT(_) => {
-                                        let n0 = s0.parse::<f32>().unwrap();
-                                        let n1 = s1.parse::<f32>().unwrap();
-                                        let n2 = s2.parse::<f32>().unwrap();
-                                        type_ = MaterialVariableType::ARRAY3F(n0, n1, n2);
-                                    },
-                                    MaterialVariableType::DOUBLE(_) => {
-                                        let n0 = s0.parse::<f64>().unwrap();
-                                        let n1 = s1.parse::<f64>().unwrap();
-                                        let n2 = s2.parse::<f64>().unwrap();
-                                        type_ = MaterialVariableType::ARRAY3D(n0, n1, n2);
-                                    },
-                                    _ => panic!("Invalid array type"),
-                                }
-                            },
-                            Rule::array4 => {
-                                let s0 = array.clone().into_inner().nth(0).unwrap().as_str();
-                                let s1 = array.clone().into_inner().nth(1).unwrap().as_str();
-                                let s2 = array.clone().into_inner().nth(2).unwrap().as_str();
-                                let s3 = array.into_inner().nth(3).unwrap().as_str();
-                                match type_to_interpret_to {
-                                    MaterialVariableType::INTEGER(_) => {
-                                        let n0 = s0.parse::<i32>().unwrap();
-                                        let n1 = s1.parse::<i32>().unwrap();
-                                        let n2 = s2.parse::<i32>().unwrap();
-                                        let n3 = s3.parse::<i32>().unwrap();
-                                        type_ = MaterialVariableType::ARRAY4(n0, n1, n2, n3);
-                                    },
-                                    MaterialVariableType::FLOAT(_) => {
-                                        let n0 = s0.parse::<f32>().unwrap();
-                                        let n1 = s1.parse::<f32>().unwrap();
-                                        let n2 = s2.parse::<f32>().unwrap();
-                                        let n3 = s3.parse::<f32>().unwrap();
-                                        type_ = MaterialVariableType::ARRAY4F(n0, n1, n2, n3);
-                                    },
-                                    MaterialVariableType::DOUBLE(_) => {
-                                        let n0 = s0.parse::<f64>().unwrap();
-                                        let n1 = s1.parse::<f64>().unwrap();
-                                        let n2 = s2.parse::<f64>().unwrap();
-                                        let n3 = s3.parse::<f64>().unwrap();
-                                        type_ = MaterialVariableType::ARRAY4D(n0, n1, n2, n3);
-                                    },
-                                    _ => panic!("Invalid array type"),
-                                }
-                            },
-                            _ => panic!("Invalid array")
-                        }
-
-                    },
-                    _ => panic!("Invalid value in variable declaration")
+                match treat_vardec(&mut pair.into_inner(), &mut material) {
+                    Err(e) => return Err(e),
+                    _ => {}
                 }
-                material.variables.insert(varname,   type_ );
-            },
-            Rule::proxyblock => {
-
             },
             _ => println!("Unsupported rule: {:?}", pair.as_rule()),
         }
     }
-
-    //todo: sanity checking
-
+    // Sanity check
+    if material.shader.is_empty() {
+        return Err("No shader specified")
+    }
     Ok(material)
 }
 

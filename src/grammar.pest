@@ -50,7 +50,9 @@ identblockstart = { ident ~ blockstart }
 blockend = _{ "}" }
 
 proxy = { identblockstart ~ proxyparamlist ~ blockend }
-proxyblockstart = _{ ^"proxies" ~ blockstart }
-proxyblock = { proxyblockstart ~ proxy* ~ blockend }
+renderproxyblockstart = _{ ^"renderproxies" ~ blockstart }
+renderproxyblock = { renderproxyblockstart ~ proxy* ~ blockend }
+setupproxyblockstart = _{ ^"setupproxies" ~ blockstart }
+setupproxyblock = { setupproxyblockstart ~ proxy* ~ blockend }
 
-material = { identblockstart ~ vardeclist? ~ proxyblock? ~ blockend }
+material = { identblockstart ~ vardeclist? ~ (setupproxyblock | renderproxyblock)* ~ blockend }
