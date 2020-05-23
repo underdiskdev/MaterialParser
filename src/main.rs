@@ -30,26 +30,37 @@ pub enum MaterialVariableType {
     ARRAY3D (f64, f64, f64),
     ARRAY4D (f64, f64, f64, f64),
 }
-
-pub enum MaterialSourceOrDestination {
+#[derive(Debug)]pub enum MaterialVariableReference { // Can be a value or reference a variable
     TYPE (MaterialVariableType),
-    VARIABLE (String),
+    VARIABLE(String),
     ARRAYREF (String, u32),
 }
-
-pub struct MaterialProxyParameter {
-    pub name: String,
-    pub value: MaterialVariableType,
-}
-
+#[derive(Debug)]
 pub struct MaterialProxy {
     pub name: String,
-    pub parameters: Vec<MaterialProxyParameter>,
+    pub parameters: HashMap<String, MaterialVariableReference>,
 }
-
+#[derive(Debug)]
 pub struct MaterialFile {
     pub shader: String,
     pub variables: HashMap<String, MaterialVariableType>,
+    pub setup_proxies: Vec<MaterialProxy>,
+    pub render_proxies: Vec<MaterialProxy>,
+}
+
+fn var_to_string(pair: &mut pest::iterators::Pairs<'_, Rule>) -> Result<String, &'static str> {
+    let p = pair.nth(0);
+    match p {
+        Some(data) => {
+            match data.as_rule() {
+                Rule::ident => {
+                    return Ok(data.as_str().to_owned())
+                },
+                _ => return Err("Expected 'ident' in 'variable'")
+            }
+        },
+        None => return Err("Empty variable")
+    }
 }
 
 fn treat_identblockstart(pair: &mut pest::iterators::Pairs<'_, Rule>, material: &mut MaterialFile) -> Result<(), &'static str> {
@@ -67,29 +78,114 @@ fn treat_identblockstart(pair: &mut pest::iterators::Pairs<'_, Rule>, material: 
     Ok(())
 }
 
-fn treat_vardec(pair: &mut pest::iterators::Pairs<'_, Rule>, material: &mut MaterialFile) -> Result<(), &'static str> {
-    let varname = match pair.nth(0) {
-        Some(variable) => {
-            match variable.into_inner().nth(0) {
-                Some(ident) => {
-                    ident.as_str().to_owned()
-                },
-                None => return Err("Invalid identifier in vardec")
-            }
-        },
-        None => return Err("Expected 2 elements in vardec")
-    };
+fn treat_proxy(proxy: pest::iterators::Pair<'_, Rule>) -> Result<MaterialProxy, &'static str> {
+    let mut name = String::new();
+    let mut parameters = HashMap::new();
 
-    let val = match pair.nth(0) {
-        Some(value) => {
-            match value.into_inner().nth(0) {
-                Some(data) => data,
-                None => return Err("Invalid value in vardec")
-            }
-        },
-        None => return Err("Expected 2 elements in vardec")
-    };
+    let proxy = proxy.into_inner();
 
+    for element in proxy {
+        match element.as_rule() {
+            Rule::identblockstart => {
+                match element.into_inner().nth(0) {
+                    Some(data) => {
+                        match data.as_rule() {
+                            Rule::ident => {
+                                name = data.as_str().to_owned();
+                            },
+                            _ => return Err("Expected 'ident' in 'identblockstart'")
+                        }
+                    },
+                    None => return Err("Invalid identblockstart")
+                }
+                
+            },
+            Rule::proxyparam => {
+                let param_name: String;
+                //todo: remove ugly .clone()
+                match element.clone().into_inner().nth(0) {
+                    Some(data) => {
+                        match data.as_rule() {
+                            Rule::ident => {
+                                param_name = data.as_str().to_owned();
+                            },
+                            _ => return Err("Expected ident in 'proxyparam'")
+                        }
+                    },
+                    None => return Err("Expected 2 elements in 'proxyparam'")
+                };
+            
+                match element.into_inner().nth(1) {
+                    Some(data) => {
+                        match data.as_rule() {
+                            Rule::srcdest => {
+                                match data.into_inner().nth(0) {
+                                    Some(srcdst) => {
+                                        match srcdst.as_rule() {
+                                            Rule::variable => {
+                                                let vts = var_to_string(&mut srcdst.into_inner());
+                                                match vts {
+                                                    Ok(varname) => {
+                                                        parameters.insert(param_name, MaterialVariableReference::VARIABLE(varname));
+                                                    },
+                                                    Err(e) => return Err(e)
+                                                }
+                                                
+                                            },
+                                            Rule::arrayref => {
+                                                //todo: Arrays are not yet supported
+                                                return Err("Arrays are not yet supported")
+                                            },
+                                            Rule::value => {
+                                                let srcdst = match srcdst.into_inner().nth(0) {
+                                                    Some(data) => data,
+                                                    None => return Err("Empty value")
+                                                };
+                                                let type_ = match treat_value(srcdst) {
+                                                    Ok(data) => data,
+                                                    Err(e) => return Err(e)
+                                                };
+                                                parameters.insert(param_name, MaterialVariableReference::TYPE(type_));
+                                            },
+                                            _ => return Err("Invalid srcdest")
+                                        }
+                                    },
+                                    None => return Err("Empty srcdest")
+                                }
+                            },
+                            _ => return Err("Expected srcdest in 'proxyparam'")
+                        }
+                    },
+                    None => return Err("Expected 2 elements in 'proxyparam'")
+                }
+                
+            },
+            _ => return Err("Invalid proxy")
+        }
+    }
+    
+    Ok(MaterialProxy {
+        name,
+        parameters
+    })
+}
+
+fn treat_proxyblock(pair: &mut pest::iterators::Pairs<'_, Rule>, proxy_vec: &mut Vec<MaterialProxy>) -> Result<(), &'static str> {
+    for element in pair {
+        match element.as_rule() {
+            Rule::proxy => {
+                match treat_proxy(element) {
+                    Ok(proxy) => proxy_vec.push(proxy),
+                    Err(e) => return Err(e)
+                }
+            },
+            _ => return Err("Expected proxy")
+        }
+    }
+    Ok(())
+}
+
+fn treat_value(val: pest::iterators::Pair<'_, Rule>) -> Result<MaterialVariableType, &'static str> {
     let type_: MaterialVariableType;
     match val.as_rule() {
         Rule::string => {
@@ -142,8 +238,38 @@ fn treat_vardec(pair: &mut pest::iterators::Pairs<'_, Rule>, material: &mut Mate
         },
         //todo: Arrays are currently unsupported
         Rule::array => return Err("Arrays are currently unsupported"),
-        _ => return Err("Invalid value type in vardec")
+        _ => return Err("Invalid value type in value")
     }
+    return Ok(type_)
+}
+
+fn treat_vardec(pair: &mut pest::iterators::Pairs<'_, Rule>, material: &mut MaterialFile) -> Result<(), &'static str> {
+    let varname = match pair.nth(0) {
+        Some(variable) => {
+            match variable.into_inner().nth(0) {
+                Some(ident) => {
+                    ident.as_str().to_owned()
+                },
+                None => return Err("Invalid identifier in vardec")
+            }
+        },
+        None => return Err("Expected 2 elements in vardec")
+    };
+
+    let val = match pair.nth(0) {
+        Some(value) => {
+            match value.into_inner().nth(0) {
+                Some(data) => data,
+                None => return Err("Invalid value in vardec")
+            }
+        },
+        None => return Err("Expected 2 elements in vardec")
+    };
+
+    let type_ = match treat_value(val) {
+        Ok(data) => data,
+        Err(e) => return Err(e)
+    };
     material.variables.insert(varname,   type_ );
     Ok(())
 }
@@ -190,6 +316,8 @@ fn parse_material_file(data: &String) -> Result<MaterialFile, &'static str> {
     let mut material = MaterialFile {
         shader: String::new(),
         variables: HashMap::new(),
+        setup_proxies: Vec::with_capacity(2),
+        render_proxies: Vec::with_capacity(5),
     };
 
     for pair in pairs.into_inner() {
@@ -206,6 +334,18 @@ fn parse_material_file(data: &String) -> Result<MaterialFile, &'static str> {
                     _ => {}
                 }
             },
+            Rule::setupproxyblock => {
+                match treat_proxyblock(&mut pair.into_inner(), &mut material.setup_proxies) {
+                    Ok(_) => {},
+                    Err(e) => return Err(e)
+                }
+            },
+            Rule::renderproxyblock => {
+                match treat_proxyblock(&mut pair.into_inner(), &mut material.render_proxies) {
+                    Ok(_) => {},
+                    Err(e) => return Err(e)
+                }
+            },
             _ => println!("Unsupported rule: {:?}", pair.as_rule()),
         }
     }
@@ -219,10 +359,26 @@ fn parse_material_file(data: &String) -> Result<MaterialFile, &'static str> {
 fn print_material_information(material: &MaterialFile) {
     println!("{}", Style::new().bold().paint("===============================\nINFORMATION ABOUT THE MATERIAL\n==============================="));
     println!("{} {}", Style::new().bold().paint("SHADER:"), material.shader);
-    println!("{}", Style::new().bold().paint("VARIABLES:"));
 
+    println!("{}", Style::new().bold().paint("VARIABLES:"));
     for value in &material.variables {
         println!("\t{}: {:?}", Style::new().italic().paint(value.0), value.1);
+    }
+
+    println!("{}", Style::new().bold().paint("PROXIES:"));
+    println!("{}", Style::new().bold().paint("\tSETUP"));
+    for value in &material.setup_proxies {
+        println!("\t  {}:", Style::new().italic().paint(&value.name));
+        for param in &value.parameters {
+            println!("\t    {}: {:?}", Style::new().italic().paint(param.0), param.1);
+        }
+    }
+    println!("{}", Style::new().bold().paint("\tRENDER"));
+    for value in &material.render_proxies {
+        println!("\t  {}:", Style::new().italic().paint(&value.name));
+        for param in &value.parameters {
+            println!("\t    {}: {:?}", Style::new().italic().paint(param.0), param.1);
+        }
     }
 }
 
