@@ -80,8 +80,8 @@ fn treat_identblockstart(pair: &mut pest::iterators::Pairs<'_, Rule>, material: 
 
 fn treat_arrayref(arrayref: &mut pest::iterators::Pairs<'_, Rule>) -> Result<MaterialVariableReference, &'static str> {
 
-    let mut name = String::new();
-    let mut index = 0;
+    let name;
+    let index;
     match arrayref.nth(0) {
         Some(data) => {
             match data.as_rule() {
