@@ -239,7 +239,7 @@ fn treat_arraydec(array: pest::iterators::Pairs<'_, Rule>) -> Result<MaterialVar
                     Some(data) => {
                         match data.as_rule() {
                             //todo: For now non_int = double, that is not desirable as it could also represent a float
-                            Rule::non_int => {
+                            Rule::non_int | Rule::signed_non_int => {
                                 let string = data.as_str().to_owned();
                                 let n = match string.parse::<f64>() {
                                     Ok(data) => data,
@@ -278,7 +278,7 @@ fn treat_arraydec(array: pest::iterators::Pairs<'_, Rule>) -> Result<MaterialVar
                                 type_ = type2;
                                 vec.push(type_.clone());
                             },
-                            Rule::integer => {
+                            Rule::integer | Rule::signed_integer => {
                                 let string = data.as_str().to_owned();
                                 let n = match string.parse::<i32>() {
                                     Ok(data) => data,
