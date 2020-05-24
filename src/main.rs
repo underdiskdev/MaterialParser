@@ -10,7 +10,7 @@ use ansi_term::Style;
 #[grammar = "grammar.pest"]
 pub struct SMFParser;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum MaterialVariableType {
     NONE,
     FLOAT (f32),
@@ -78,6 +78,41 @@ fn treat_identblockstart(pair: &mut pest::iterators::Pairs<'_, Rule>, material: 
     Ok(())
 }
 
+fn treat_arrayref(arrayref: &mut pest::iterators::Pairs<'_, Rule>) -> Result<MaterialVariableReference, &'static str> {
+
+    let mut name = String::new();
+    let mut index = 0;
+    match arrayref.nth(0) {
+        Some(data) => {
+            match data.as_rule() {
+                Rule::ident => {
+                    name = data.as_str().to_owned();
+                }
+                _ => return Err("Expected 'ident' in 'arrayref'")
+            }
+        },
+        None => return Err("Empty arrayref")
+    }
+
+    match arrayref.nth(0) {
+        Some(data) => {
+            match data.as_rule() {
+                Rule::integer => {
+                    let string = data.as_str().to_owned();
+                    index = match string.parse::<u32>() {
+                        Ok(data) => data,
+                        Err(_) => return Err("Integer parsing error")
+                    };
+                }
+                _ => return Err("Expected 'ident' in 'arrayref'")
+            }
+        },
+        None => return Err("Empty arrayref")
+    }
+
+    return Ok(MaterialVariableReference::ARRAYREF(name, index))
+}
+
 fn treat_proxy(proxy: pest::iterators::Pair<'_, Rule>) -> Result<MaterialProxy, &'static str> {
     let mut name = String::new();
     let mut parameters = HashMap::new();
@@ -133,15 +168,19 @@ fn treat_proxy(proxy: pest::iterators::Pair<'_, Rule>) -> Result<MaterialProxy, 
                                                 
                                             },
                                             Rule::arrayref => {
-                                                //todo: Arrays are not yet supported
-                                                return Err("Arrays are not yet supported")
+                                                let matvarref = match treat_arrayref(&mut srcdst.into_inner()) {
+                                                    Ok(data) => data,
+                                                    Err(e) => return Err(e)
+                                                };
+
+                                                parameters.insert(param_name, matvarref);
                                             },
                                             Rule::value => {
                                                 let srcdst = match srcdst.into_inner().nth(0) {
                                                     Some(data) => data,
                                                     None => return Err("Empty value")
                                                 };
-                                                let type_ = match treat_value(srcdst) {
+                                                let type_ = match treat_value(srcdst, false) {
                                                     Ok(data) => data,
                                                     Err(e) => return Err(e)
                                                 };
@@ -185,7 +224,239 @@ fn treat_proxyblock(pair: &mut pest::iterators::Pairs<'_, Rule>, proxy_vec: &mut
     Ok(())
 }
 
-fn treat_value(val: pest::iterators::Pair<'_, Rule>) -> Result<MaterialVariableType, &'static str> {
+fn comp_types(type1: &MaterialVariableType, type2: &MaterialVariableType) -> bool {
+    std::mem::discriminant(type1) == std::mem::discriminant(type2)
+}
+
+//this code is a mess!
+fn treat_arraydec(array: pest::iterators::Pairs<'_, Rule>) -> Result<MaterialVariableType, &'static str> {
+    let mut type_ = MaterialVariableType::NONE;
+    let mut vec = Vec::with_capacity(4);
+    for element in array {
+        match element.as_rule() {
+            Rule::number => {
+                match element.into_inner().nth(0) {
+                    Some(data) => {
+                        match data.as_rule() {
+                            //todo: For now non_int = double, that is not desirable as it could also represent a float
+                            Rule::non_int => {
+                                let string = data.as_str().to_owned();
+                                let n = match string.parse::<f64>() {
+                                    Ok(data) => data,
+                                    Err(_) => return Err("Double parsing error in vector declaration")
+                                };
+                                let type2 = MaterialVariableType::DOUBLE(n);
+                                if type_ != MaterialVariableType::NONE && !comp_types(&type_, &type2) {
+                                    return Err("Ambiguous number type in vector declaration")
+                                }
+                                type_ = type2;
+                                vec.push(type_.clone());
+                            },
+                            Rule::float => {
+                                let string = data.as_str().to_owned();
+                                let n = match f32::from_parsed_number_string(&string) {
+                                    Ok(data) => data,
+                                    Err(e) => return Err(e)
+                                };
+                                let type2 = MaterialVariableType::FLOAT(n);
+                                if type_ != MaterialVariableType::NONE && !comp_types(&type_, &type2) {
+                                    return Err("Ambiguous number type in vector declaration")
+                                }
+                                type_ = type2;
+                                vec.push(type_.clone());
+                            },
+                            Rule::double => {
+                                let string = data.as_str().to_owned();
+                                let n = match f64::from_parsed_number_string(&string) {
+                                    Ok(data) => data,
+                                    Err(e) => return Err(e)
+                                };
+                                let type2 = MaterialVariableType::DOUBLE(n);
+                                if type_ != MaterialVariableType::NONE && !comp_types(&type_, &type2) {
+                                    return Err("Ambiguous number type in vector declaration")
+                                }
+                                type_ = type2;
+                                vec.push(type_.clone());
+                            },
+                            Rule::integer => {
+                                let string = data.as_str().to_owned();
+                                let n = match string.parse::<i32>() {
+                                    Ok(data) => data,
+                                    Err(_) => return Err("Integer parsing error in vector declaration")
+                                };
+                                let type2 = MaterialVariableType::INTEGER(n);
+                                if type_ != MaterialVariableType::NONE && !comp_types(&type_, &type2) {
+                                    return Err("Ambiguous number type in vector declaration")
+                                }
+                                type_ = type2;
+                                vec.push(type_.clone());
+                            },
+                            _ => return Err("Invalid number")
+                        }
+                    },
+                    None => return Err("Empty number")
+                }
+            },
+            _ => return Err("Only numbers are allowed in a vector declaration")
+        }
+    }
+
+    match vec.len() {
+        2 => {
+            match type_ {
+                MaterialVariableType::INTEGER(_) => {
+                    let n1 = match vec[0] {
+                        MaterialVariableType::INTEGER(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n2 = match vec[1] {
+                        MaterialVariableType::INTEGER(data) => data,
+                        _ => return Err("???")
+                    };
+                    return Ok(MaterialVariableType::ARRAY2(n1, n2))
+                },
+                MaterialVariableType::FLOAT(_) => {
+                    let n1 = match vec[0] {
+                        MaterialVariableType::FLOAT(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n2 = match vec[1] {
+                        MaterialVariableType::FLOAT(data) => data,
+                        _ => return Err("???")
+                    };
+                    return Ok(MaterialVariableType::ARRAY2F(n1, n2))
+                },
+                MaterialVariableType::DOUBLE(_) => {
+                    let n1 = match vec[0] {
+                        MaterialVariableType::DOUBLE(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n2 = match vec[1] {
+                        MaterialVariableType::DOUBLE(data) => data,
+                        _ => return Err("???")
+                    };
+                    return Ok(MaterialVariableType::ARRAY2D(n1, n2))
+                }
+                _ => return Err("????")
+            }
+        },
+        3 => {
+            match type_ {
+                MaterialVariableType::INTEGER(_) => {
+                    let n1 = match vec[0] {
+                        MaterialVariableType::INTEGER(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n2 = match vec[1] {
+                        MaterialVariableType::INTEGER(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n3 = match vec[2] {
+                        MaterialVariableType::INTEGER(data) => data,
+                        _ => return Err("???")
+                    };
+                    return Ok(MaterialVariableType::ARRAY3(n1, n2, n3))
+                },
+                MaterialVariableType::FLOAT(_) => {
+                    let n1 = match vec[0] {
+                        MaterialVariableType::FLOAT(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n2 = match vec[1] {
+                        MaterialVariableType::FLOAT(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n3 = match vec[2] {
+                        MaterialVariableType::FLOAT(data) => data,
+                        _ => return Err("???")
+                    };
+                    return Ok(MaterialVariableType::ARRAY3F(n1, n2, n3))
+                },
+                MaterialVariableType::DOUBLE(_) => {
+                    let n1 = match vec[0] {
+                        MaterialVariableType::DOUBLE(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n2 = match vec[1] {
+                        MaterialVariableType::DOUBLE(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n3 = match vec[2] {
+                        MaterialVariableType::DOUBLE(data) => data,
+                        _ => return Err("???")
+                    };
+                    return Ok(MaterialVariableType::ARRAY3D(n1, n2, n3))
+                }
+                _ => return Err("????")
+            }
+        },
+        4 => {
+            match type_ {
+                MaterialVariableType::INTEGER(_) => {
+                    let n1 = match vec[0] {
+                        MaterialVariableType::INTEGER(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n2 = match vec[1] {
+                        MaterialVariableType::INTEGER(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n3 = match vec[2] {
+                        MaterialVariableType::INTEGER(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n4 = match vec[3] {
+                        MaterialVariableType::INTEGER(data) => data,
+                        _ => return Err("???")
+                    };
+                    return Ok(MaterialVariableType::ARRAY4(n1, n2, n3, n4))
+                },
+                MaterialVariableType::FLOAT(_) => {
+                    let n1 = match vec[0] {
+                        MaterialVariableType::FLOAT(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n2 = match vec[1] {
+                        MaterialVariableType::FLOAT(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n3 = match vec[2] {
+                        MaterialVariableType::FLOAT(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n4 = match vec[3] {
+                        MaterialVariableType::FLOAT(data) => data,
+                        _ => return Err("???")
+                    };
+                    return Ok(MaterialVariableType::ARRAY4F(n1, n2, n3, n4))
+                },
+                MaterialVariableType::DOUBLE(_) => {
+                    let n1 = match vec[0] {
+                        MaterialVariableType::DOUBLE(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n2 = match vec[1] {
+                        MaterialVariableType::DOUBLE(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n3 = match vec[2] {
+                        MaterialVariableType::DOUBLE(data) => data,
+                        _ => return Err("???")
+                    };
+                    let n4 = match vec[3] {
+                        MaterialVariableType::DOUBLE(data) => data,
+                        _ => return Err("???")
+                    };
+                    return Ok(MaterialVariableType::ARRAY4D(n1, n2, n3, n4))
+                },
+                _ => return Err("????")
+            }
+        },
+        _ => return Err("Invalid vector size"),
+    }
+}
+
+fn treat_value(val: pest::iterators::Pair<'_, Rule>, support_rvalues: bool) -> Result<MaterialVariableType, &'static str> {
     let type_: MaterialVariableType;
     match val.as_rule() {
         Rule::string => {
@@ -236,8 +507,16 @@ fn treat_value(val: pest::iterators::Pair<'_, Rule>) -> Result<MaterialVariableT
                 _ => return Err("Invalid number")
             }
         },
-        //todo: Arrays are currently unsupported
-        Rule::array => return Err("Arrays are currently unsupported"),
+        Rule::array => {
+            if support_rvalues {
+                type_ = match treat_arraydec(val.into_inner()) {
+                    Ok(data) => data,
+                    Err(e) => return Err(e)
+                }
+            } else {
+                return Err("Cannot use vector declaration as proxy parameter")
+            }
+        }
         _ => return Err("Invalid value type in value")
     }
     return Ok(type_)
@@ -266,7 +545,7 @@ fn treat_vardec(pair: &mut pest::iterators::Pairs<'_, Rule>, material: &mut Mate
         None => return Err("Expected 2 elements in vardec")
     };
 
-    let type_ = match treat_value(val) {
+    let type_ = match treat_value(val, true) {
         Ok(data) => data,
         Err(e) => return Err(e)
     };

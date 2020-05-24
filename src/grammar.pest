@@ -21,9 +21,9 @@ escape    = @{ "\\" ~ ("\"" | "\\" | "r" | "n" | "t" | "0" | "'" ) }
 inner_str = @{ (!("\"" | "\\") ~ ANY)* ~ (escape ~ inner_str)? }
 string = ${ quote ~ inner_str ~ quote }
 
-array2 = {"[" ~ number ~ "," ~ number ~ "]" }
-array3 = {"[" ~ number ~ "," ~ number ~ "," ~ number ~ "]" }
-array4 = {"[" ~ number ~ "," ~ number ~ "," ~ number ~ "," ~ number ~ "]" }
+array2 = _{"[" ~ number ~ "," ~ number ~ "]" }
+array3 = _{"[" ~ number ~ "," ~ number ~ "," ~ number ~ "]" }
+array4 = _{"[" ~ number ~ "," ~ number ~ "," ~ number ~ "," ~ number ~ "]" }
 
 array = { array2 | array3 | array4 }
 
